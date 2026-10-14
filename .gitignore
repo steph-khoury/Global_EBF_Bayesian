@@ -1,0 +1,21 @@
+# Restricted microdata (DHS/MICS terms of use) — never commit
+data/restricted/*
+!data/restricted/.gitkeep
+
+# Generated outputs
+03_meta_analysis/EBF_Results/
+03_meta_analysis/model_outputs/
+03_meta_analysis/summary_tables/
+03_meta_analysis/*.jags
+03_meta_analysis/*.png
+03_meta_analysis/*.html
+*.rds
+
+# R / RStudio / OS files
+.Rhistory
+.RData
+.Rproj.user/
+*_cache/
+*_files/
+.DS_Store
+Thumbs.db
