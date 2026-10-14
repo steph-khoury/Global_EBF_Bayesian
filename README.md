@@ -2,7 +2,7 @@
 
 Code and derived data for:
 
-> Khoury SM, Fink G, Joseph A-C, Wallenborn JT. *National, regional and global compliance with exclusive breastfeeding recommendations: A re-assessment using Bayesian hierarchical meta-analysis.* (submitted to PLOS Medicine)
+> Khoury SM, Fink G, Joseph A-C, Wallenborn JT. *National, regional and global compliance with exclusive breastfeeding recommendations: A re-assessment using Bayesian hierarchical meta-analysis.* (manuscript under review)
 
 The analysis estimates exclusive breastfeeding (EBF) prevalence at exactly six months of age for 135 countries, 9 UNICEF regions, and globally (2000–2023). It combines 191 Demographic and Health Surveys (DHS), 224 Multiple Indicator Cluster Surveys (MICS), and 63 published studies (546 observations) in a Bayesian hierarchical meta-analysis with a cubic B-spline for time.
 
