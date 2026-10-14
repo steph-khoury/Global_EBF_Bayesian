@@ -1,0 +1,514 @@
+---
+title: "EBF Bayesian Hierarchical Meta-Analysis"
+author: "Stephanie Khoury"
+date: "2026-07-08"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Knit this file from inside 03_meta_analysis/. By default knitr uses the
+# folder containing this .Rmd as the working directory, so the
+# MetaAnalysis_*.r scripts are found next to it and the dataset is read
+# from ../data/derived/. Do not use setwd() here.
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6
+)
+
+options(dplyr.summarise.inform = FALSE)
+
+# Set CRAN mirror for non-interactive knitting/sourcing
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+needed_pkgs <- c(
+  "tidyverse", "knitr", "kableExtra", "ggplot2",
+  "coda", "bayesplot", "patchwork", "ggdist"
+)
+
+for (p in needed_pkgs) {
+  if (!requireNamespace(p, quietly = TRUE)) install.packages(p, dependencies = TRUE)
+  suppressPackageStartupMessages(library(p, character.only = TRUE))
+}
+```
+
+## Descriptive summary tables
+
+```{r DescriptiveSummaryTables, include=FALSE}
+invisible(capture.output(source("10_MetaAnalysis_Bayes_Description.r", local = TRUE)))
+```
+
+## Bayesian Meta-Analysis
+
+```{r SimulateData, include=FALSE}
+invisible(capture.output(source("11_MetaAnalysis_Bayes_spline.r", local = TRUE)))
+```
+
+## JAGS
+
+```{r Model_setup, include=FALSE}
+invisible(capture.output(source("12_MetaAnalysis_JAGS_spline.r", local = TRUE)))
+
+jags_overview <- tibble::tibble(
+  Metric = c(
+    "Chains",
+    "Iterations per chain",
+    "Burn-in",
+    "Thinning",
+    "Saved posterior draws",
+    "Countries",
+    "Regions",
+    "Districts",
+    "DIC",
+    "Year spline interior knots",
+    "Year spline basis columns"
+  ),
+  Value = c(
+    ebf_fit$BUGSoutput$n.chains,
+    ebf_fit$BUGSoutput$n.iter,
+    ebf_fit$BUGSoutput$n.burnin,
+    ebf_fit$BUGSoutput$n.thin,
+    ebf_fit$BUGSoutput$n.sims,
+    ebf_data$N_countries,
+    ebf_data$N_regions,
+    ebf_data$N_districts,
+    round(ebf_fit$BUGSoutput$DIC, 1),
+    spline_meta$N_KNOTS,
+    spline_meta$N_spline_cols
+  )
+)
+```
+
+```{r Model_summary}
+knitr::kable(jags_overview, caption = "JAGS model fit summary") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+## The Checklist
+
+* *Phase 1*: Convergence Diagnostics
+* *Phase 2*: Posterior Predictive Checks
+* *Bridge*: Variance partitioning with intraclass correlation coefficient (ICC) & global year trend (spline)
+* *Phase 3*: Results & Inference
+
+## Phase 1: Convergence Diagnostics
+
+Check if the MCMC chains actually finished their job.
+
+* R-hat
+* Effective Sample Size (ESS)
+* Trace plots
+* Density plots
+* Lag plots
+
+```{r Phase1_setup, include=FALSE}
+invisible(capture.output(source("13_MetaAnalysis_Diagnostics.r", local = TRUE)))
+
+fit_obj <- if (exists("ebf_fit.upd")) ebf_fit.upd else ebf_fit
+fit_summary <- as.data.frame(fit_obj$BUGSoutput$summary)
+fit_summary$parameter <- rownames(fit_summary)
+
+ess_vals <- coda::effectiveSize(as.mcmc(fit_obj))
+ebf_mcmc <- as.mcmc(fit_obj)
+
+diag_overview <- tibble::tibble(
+  Metric = c(
+    "Maximum R-hat",
+    "Median R-hat",
+    "Minimum ESS",
+    "Median ESS",
+    "Parameters with R-hat > 1.01",
+    "Parameters with ESS < 400"
+  ),
+  Value = c(
+    round(max(fit_summary$Rhat, na.rm = TRUE), 3),
+    round(median(fit_summary$Rhat, na.rm = TRUE), 3),
+    round(min(ess_vals, na.rm = TRUE), 1),
+    round(median(ess_vals, na.rm = TRUE), 1),
+    sum(fit_summary$Rhat > 1.01, na.rm = TRUE),
+    sum(ess_vals < 400, na.rm = TRUE)
+  )
+)
+
+flagged_rhat <- fit_summary |>
+  dplyr::filter(!is.na(Rhat) & Rhat > 1.01) |>
+  dplyr::select(parameter, Rhat)
+
+flagged_ess <- tibble::tibble(
+  parameter = names(ess_vals),
+  ESS = as.numeric(ess_vals)
+) |>
+  dplyr::filter(ESS < 400)
+
+flagged_diag <- flagged_rhat |>
+  dplyr::full_join(flagged_ess, by = "parameter") |>
+  dplyr::arrange(dplyr::desc(Rhat), ESS)
+
+if (nrow(flagged_diag) == 0) {
+  flagged_diag <- tibble::tibble(Message = "No monitored parameters exceeded thresholds.")
+}
+
+trace_params <- c("prev_global", "sigma_country", "sigma_district", "sigma_region")
+trace_params <- trace_params[trace_params %in% varnames(ebf_mcmc)]
+
+density_params <- c("prev_global", "sigma_country", "sigma_district", "sigma_region")
+density_params <- density_params[density_params %in% varnames(ebf_mcmc)]
+```
+
+```{r Phase1_summary, results='asis'}
+cat(sprintf(
+  "The model converged: maximum R-hat = %.3f and minimum ESS = %s across all monitored parameters.\n\n",
+  round(max(fit_summary$Rhat, na.rm = TRUE), 3),
+  format(round(min(ess_vals, na.rm = TRUE), 0), big.mark = ",")
+))
+```
+
+```{r Phase1_overview}
+# Convergence overview table — kept here in the DIAGNOSTIC output only.
+# It is deliberately NOT repeated in the manuscript Results Section (§3.2),
+# which shows the one-line convergence statement instead.
+knitr::kable(diag_overview, caption = "Convergence overview") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r Phase1_flagged}
+knitr::kable(flagged_diag, digits = 3, caption = "Flagged convergence parameters") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r Phase1_traceplots, fig.height=8}
+if (length(trace_params) > 0) {
+  coda::traceplot(ebf_mcmc[, trace_params, drop = FALSE])
+}
+```
+
+```{r Phase1_densityplots, fig.height=8}
+if (length(density_params) > 0) {
+  lattice::densityplot(ebf_mcmc[, density_params, drop = FALSE])
+}
+```
+
+## Phase 2: Posterior Predictive Checks
+
+Once the chains converge, we check whether the model reproduces the main patterns seen in the observed surveys.
+
+* PPC density overlay
+* Bayesian p-values
+* PPC interval coverage
+* Posterior predictive summary statistics
+* Residual plots
+* Observation-level diagnostic plots
+
+```{r Phase2_setup, include=FALSE}
+invisible(capture.output(source("14_MetaAnalysis_PosteriorChecks_spline.r", local = TRUE)))
+
+ppc_summary <- tibble::tibble(
+  Metric = c(
+    "Bayesian p-value (median)",
+    "Bayesian p-value (mean)",
+    "Bayesian p-value (sd)",
+    "Coverage (%)"
+  ),
+  Value = c(
+    round(p_val_median, 3),
+    round(p_val_mean, 3),
+    round(p_val_sd, 3),
+    round(coverage_pct, 1)
+  )
+)
+```
+
+```{r Phase2_summary}
+knitr::kable(ppc_summary, caption = "Posterior predictive check summary") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r Phase2_density}
+print(ppc_dens)
+```
+
+```{r Phase2_interval}
+print(ppc_int)
+```
+
+```{r Phase2_uncovered}
+if (!is.null(uncovered_studies) && nrow(uncovered_studies) > 0) {
+  knitr::kable(
+    uncovered_studies,
+    digits  = 3,
+    caption = "Studies falling outside 95% posterior predictive interval"
+  ) |>
+    kableExtra::kable_styling(full_width = FALSE)
+} else {
+  cat("All studies fall within the 95% predictive interval.")
+}
+```
+
+```{r Phase2_teststats}
+print(pp_median_plot)
+print(pp_mean_plot)
+```
+
+```{r Phase2_residuals}
+print(resid_plot)
+```
+
+```{r Phase2_obsdiag}
+print(diag_plot_obs)
+print(diag_plot_obs + facet_wrap(~has_district))
+```
+
+```{r Phase2_pooling}
+print(pool_neff_obs)
+print(pool_neff_obs + facet_wrap(~has_district))
+```
+
+```{r Phase2_regiondiag}
+print(diag_plot_region)
+print(diag_plot_region_wdist)
+print(diag_plot_region_wodist)
+```
+
+## Bridge: Variance partitioning with intraclass correlation coefficient (ICC)
+
+Answers the question: “Of all the reasons why two random EBF surveys in my dataset are different, what proportion of that difference is because they come from different studies, districts, countries, or regions?” The latent study mean ($\theta_i$) is retained in the model as a random effect; residual study-level variance (`tau_study`) is reported separately and is not part of the geographic variance decomposition.
+
+```{r ICC_setup, include=FALSE}
+invisible(capture.output(source("15_MetaAnalysis_ICC.r", local = TRUE)))
+```
+
+```{r ICC_table}
+icc_display <- as.data.frame(icc_table) |>
+  tibble::rownames_to_column("Level") |>
+  dplyr::mutate(
+    median = round(median * 100, 1),
+    lower  = round(lower * 100, 1),
+    upper  = round(upper * 100, 1)
+  )
+
+knitr::kable(icc_display, caption = "Variance decomposition (%)") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r ICC_plot, fig.width=10, fig.height=6}
+print(icc_plot)
+```
+
+### Global year trend (B-spline)
+
+The model includes a cubic B-spline on year of prevalence (`r spline_meta$N_KNOTS` interior knots, quantile-placed, `r spline_meta$N_spline_cols` basis columns) to absorb the global time trend in EBF rates. Spline coefficients are given an independent shrinkage prior ($\beta_k \sim \mathcal{N}(0, \sigma^2_{\text{spline}})$) to prevent overfitting in years with sparse survey coverage. Because the latent study mean ($\theta_i$) absorbs study-level noise, the spline reflects the underlying structural time trend rather than being pulled toward individual outlier surveys. The plot below shows the posterior median and 95% credible interval of the global EBF trend, evaluated at the grand mean prevalence.
+
+```{r Bridge_spline_trend, fig.width=10, fig.height=6}
+print(year_trend_plot)
+```
+
+## Phase 3: Results & Inference
+
+Once Phases 1 and 2 are acceptable, we move to the substantive results.
+
+* Posterior Summary plots: forest, caterpillar, and half-eye plots
+* Exceedance (Target) Probabilities
+* Exceedance (Relative-Region) Probabilities
+
+```{r Phase3_setup, include=FALSE}
+invisible(capture.output(source("16_MetaAnalysis_Summary.r", local = TRUE)))
+invisible(capture.output(source("17_MetaAnalysis_Probabilities.r", local = TRUE)))
+```
+
+#### Ranked Caterpillar Plot
+
+```{r Phase3_caterpillar, fig.width=10, fig.height=7}
+print(ranked_caterpillar)
+print(diamond_ranked_caterpillar)
+```
+
+#### Forest Plots by Region
+
+```{r Phase3_forest, results='asis', fig.width=10, fig.height=7}
+for (rg in region_levels_present) {
+  cat("\n\n### Forest plot:", region_label(rg), "\n\n")
+  print(forest.f(rg))
+}
+```
+
+#### Half-eye Plot
+
+```{r Phase3_halfeye, fig.width=10, fig.height=7}
+print(halfeye)
+```
+
+#### Exceedance (Target) Probabilities
+
+```{r Phase3_target}
+knitr::kable(league_table, caption = "Global ranking and target probabilities") |>
+  kableExtra::kable_styling(full_width = FALSE)
+
+print(target_plot)
+```
+
+#### Relative-Regional Performance
+
+```{r Phase3_relative, results='asis', fig.width=10, fig.height=7}
+for (rg in region_levels_present) {
+  cat("\n\n### Relative-regional performance:", region_label(rg), "\n\n")
+  print(relative_plot.f(rg))
+  print(relative_sum.f(rg))
+}
+```
+
+At the end of the analysis we can provide three distinct layers of insight:
+
+* **Absolute Performance:** which country has the highest posterior EBF prevalence
+* **Relative Performance:** whether a country is outperforming its region
+* **Target Confidence:** how likely a country is to have met the WHA 50% target (2025 goal); the more ambitious 60% target (WHO/UNICEF, 2030 goal) is also reported
+
+<!--
+  NOTE: The previous export_output() routine has been removed.
+  There is now a SINGLE results export, defined at the end of
+  18_MetaAnalysis_Results_Section.r, which writes one timestamped
+  "EBF_Results/<timestamp>/" folder with Tables/, Figures/ and
+  Diagnostics/ subfolders. It is sourced in the setup chunk below.
+-->
+
+## Results Section — Tables, Maps & Additional Figures
+
+All outputs needed to write the results section of the manuscript. Everything below is derived from the **spline model**; the time trends (global and regional) come from the year spline.
+
+```{r ResultsSection_setup, include=FALSE}
+invisible(capture.output(source("18_MetaAnalysis_Results_Section.r", local = TRUE)))
+```
+
+### §3.1 — Analytic sample
+
+```{r RS_sample}
+knitr::kable(tbl_analytic_sample,
+             caption = "Table S1. Surveys included by UNICEF region") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+### §3.2 — Convergence & model fit
+
+```{r RS_convergence, results='asis'}
+cat(convergence_statement, "\n\n", fit_statement)
+```
+
+### §3.3 — Spline coefficients
+
+```{r RS_spline_coef}
+knitr::kable(tbl_spline_coef,
+             caption = "Table S2. Year-spline coefficients (logit scale)") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+### §3.4 — Global EBF time trend (spline)
+
+```{r RS_trend_table}
+knitr::kable(tbl_trend_anchor,
+             caption = "Table 1. Global EBF prevalence at key time points") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_trend_plot, fig.width=10, fig.height=6}
+print(plot_trend_annotated)
+```
+
+### §3.5 — Regional EBF time trends (spline)
+
+```{r RS_region_trend_table}
+knitr::kable(tbl_regional_trend_anchor,
+             caption = "Table 2. Regional EBF prevalence: start, end and net change") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_region_trends, fig.width=10, fig.height=6}
+print(plot_regional_trends)
+```
+
+```{r RS_region_trends_facet, fig.width=11, fig.height=8}
+print(plot_regional_trends_facet)
+```
+
+### §3.6 — Absolute performance (global / regional / national)
+
+```{r RS_absolute_global}
+knitr::kable(tbl_absolute_global,
+             caption = "Table 3a. Absolute global EBF performance") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_absolute_regional}
+knitr::kable(tbl_absolute_regional,
+             caption = "Table 3b. Absolute regional EBF performance") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_absolute_national}
+knitr::kable(tbl_absolute_national,
+             caption = "Table 3c. Absolute national (country-level) EBF performance") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_headline_targets}
+knitr::kable(tbl_headline_targets,
+             caption = "Table 3d. Countries by posterior probability of meeting each target") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_headline_statement, results='asis'}
+cat(headline_statement)
+```
+
+### §3.7 — Relative performance (regional over-/under-performers)
+
+```{r RS_overunder}
+knitr::kable(tbl_overunder,
+             caption = "Table 4. Countries with credible over- or under-performance relative to their UNICEF region") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+### §3.8 — Variance decomposition (ICC)
+
+```{r RS_icc}
+knitr::kable(tbl_icc,
+             caption = "Table 5. Hierarchical variance decomposition (ICC)") |>
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r RS_residual_het, results='asis'}
+cat(residual_het_statement)
+```
+
+### §3.9 — Caterpillar plot (regions)
+
+```{r RS_region_caterpillar, fig.width=9, fig.height=6}
+print(region_caterpillar)
+```
+
+### §3.10 — Half-eye plot (regions) with global average, and the 50% (2025) and 60% (2030) targets
+
+```{r RS_region_halfeye, fig.width=9, fig.height=7}
+print(plot_region_halfeye)
+```
+
+### §3.11 — National choropleth map
+
+```{r RS_country_map, fig.width=14, fig.height=8}
+print(map_country)
+```
+
+### §3.12 — Regional choropleth map
+
+```{r RS_region_map, fig.width=14, fig.height=8}
+print(map_region)
+```
+
+## END ##
