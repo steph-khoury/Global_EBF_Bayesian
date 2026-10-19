@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite it as below."
+title: "Code for: National, regional and global compliance with exclusive breastfeeding recommendations: A re-assessment using Bayesian hierarchical meta-analysis"
+authors:
+  - family-names: "Khoury"
+    given-names: "S. M."
+  - family-names: "Fink"
+    given-names: "G."
+  - family-names: "Joseph"
+    given-names: "A.-C."
+  - family-names: "Wallenborn"
+    given-names: "J. T."
+version: "1.0.0"
+doi: "10.5281/zenodo.23469123"
+date-released: "2026-10-19"
+repository-code: "https://github.com/steph-khoury/Global_EBF_Bayesian"
