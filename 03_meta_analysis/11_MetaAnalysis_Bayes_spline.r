@@ -166,7 +166,7 @@ df_indexed <- df %>%
   )
 
 # ============================================================
-# YEAR SPLINE  — cubic B-spline on year of prevalence
+# YEAR SPLINE — cubic B-spline on year of prevalence
 # ============================================================
 N_KNOTS <- 3
 
