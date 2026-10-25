@@ -64,7 +64,7 @@ model {
   }
 
   # ----------------------------------------------------------
-  # Global mean  (year-trend centred, so this is approx mid-sample)
+  # Global mean at the reference year 2000 (spline term = 0)
   # ----------------------------------------------------------
   mu_global ~ dnorm(0, 0.01)
   prev_global <- ilogit(mu_global)
@@ -78,7 +78,7 @@ model {
   # Half-normal prior on sigma_district: T(0,) truncates to positive values.
   # dunif(0,2) was too flat and allowed sigma_district to collapse near zero
   # when non-district observations (has_district=0) provided no upward signal.
-  # Half-normal(0, 1) keeps mass near zero (consistent with weak district effects)
+  # Half-normal with SD 0.5 (precision 4) keeps mass near zero (consistent with weak district effects)
   # but allows the chain to find larger values if the district data supports it.
   sigma_district ~ dnorm(0, 4) T(0,)
   sigma_country  ~ dunif(0, 2)
