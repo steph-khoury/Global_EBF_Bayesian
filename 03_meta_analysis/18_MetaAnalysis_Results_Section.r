@@ -675,8 +675,8 @@ cat("\n  ", residual_het_statement, "\n")
 if (all(sapply(c("p_val_median", "p_val_mean", "p_val_sd", "coverage_pct"), exists))) {
   fit_statement <- sprintf(
     paste0(
-      "Posterior predictive checks indicated good model fit: Bayesian p-values ",
-      "were %.2f (median), %.2f (mean) and %.2f (SD), and the 95%% posterior ",
+      "Posterior predictive checks gave Bayesian p-values ",
+      "of %.2f (median), %.2f (mean) and %.2f (SD), and the 95%% posterior ",
       "predictive interval covered %.1f%% of observed surveys."
     ),
     p_val_median, p_val_mean, p_val_sd, coverage_pct
